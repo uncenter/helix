@@ -2775,7 +2775,11 @@ enum YankAction {
 
 fn delete_selection_impl(cx: &mut Context, op: Operation, yank: YankAction) {
     let (view, doc) = current!(cx.editor);
-
+    if !doc.modifiable {
+        cx.editor
+            .set_error("File is unmodifiable. Refusing to delete.");
+        return;
+    }
     let selection = doc.selection(view.id);
     let only_whole_lines = selection_is_linewise(selection, doc.text());
 
@@ -2906,7 +2910,14 @@ fn ensure_selections_forward(cx: &mut Context) {
 }
 
 fn enter_insert_mode(cx: &mut Context) {
-    cx.editor.mode = Mode::Insert;
+    let doc = doc!(cx.editor);
+
+    if !doc.modifiable {
+        cx.editor
+            .set_error("File is unmodifiable. Refusing to enter Insert mode.")
+    } else {
+        cx.editor.mode = Mode::Insert;
+    }
 }
 
 // inserts at the start of each selection
@@ -3059,6 +3070,7 @@ fn buffer_picker(cx: &mut Context) {
         is_modified: bool,
         is_current: bool,
         focused_at: std::time::Instant,
+        default_name: String,
     }
 
     let new_meta = |doc: &Document| BufferMeta {
@@ -3067,6 +3079,7 @@ fn buffer_picker(cx: &mut Context) {
         is_modified: doc.is_modified(),
         is_current: doc.id() == current,
         focused_at: doc.focused_at,
+        default_name: doc.default_name(),
     };
 
     let mut items = cx
@@ -3098,7 +3111,7 @@ fn buffer_picker(cx: &mut Context) {
                 .map(helix_stdx::path::get_relative_path);
             path.as_deref()
                 .and_then(Path::to_str)
-                .unwrap_or(SCRATCH_BUFFER_NAME)
+                .unwrap_or(&meta.default_name)
                 .to_string()
                 .into()
         }),
@@ -3124,6 +3137,7 @@ fn jumplist_picker(cx: &mut Context) {
         selection: Selection,
         text: String,
         is_current: bool,
+        default_name: String,
     }
 
     for (view, _) in cx.editor.tree.views_mut() {
@@ -3149,6 +3163,7 @@ fn jumplist_picker(cx: &mut Context) {
             selection,
             text,
             is_current: view.doc == doc_id,
+            default_name: doc.map_or(SCRATCH_BUFFER_NAME.into(), |d| d.default_name()),
         }
     };
 
@@ -3161,7 +3176,7 @@ fn jumplist_picker(cx: &mut Context) {
                 .map(helix_stdx::path::get_relative_path);
             path.as_deref()
                 .and_then(Path::to_str)
-                .unwrap_or(SCRATCH_BUFFER_NAME)
+                .unwrap_or(&item.default_name)
                 .to_string()
                 .into()
         }),
@@ -4587,6 +4602,11 @@ pub(crate) fn paste_bracketed_value(cx: &mut Context, contents: String) {
         Mode::Normal => Paste::Before,
     };
     let (view, doc) = current!(cx.editor);
+    if !doc.modifiable {
+        cx.editor
+            .set_error("File is unmodifiable. Refusing to paste.");
+        return;
+    }
     paste_impl(&[contents], doc, view, paste, count, cx.editor.mode);
     exit_select_mode(cx);
 }
@@ -4631,6 +4651,11 @@ fn replace_with_yanked_impl(editor: &mut Editor, register: char, count: usize) {
     };
     let scrolloff = editor.config().scrolloff;
     let (view, doc) = current_ref!(editor);
+    if !doc.modifiable {
+        drop(values);
+        editor.set_error("File is unmodifiable. Refusing to replace.");
+        return;
+    }
 
     let map_value = |value: &Cow<str>| {
         let value = LINE_ENDING_REGEX.replace_all(value, doc.line_ending.as_str());
@@ -4681,6 +4706,10 @@ fn paste(editor: &mut Editor, register: char, pos: Paste, count: usize) {
     let values: Vec<_> = values.map(|value| value.to_string()).collect();
 
     let (view, doc) = current!(editor);
+    if !doc.modifiable {
+        editor.set_error("File is unmodifiable. Refusing to paste.");
+        return;
+    }
     paste_impl(&values, doc, view, pos, count, editor.mode);
 }
 

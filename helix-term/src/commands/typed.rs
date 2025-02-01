@@ -1,13 +1,17 @@
 use std::fmt::Write;
 use std::io::BufReader;
 use std::ops::Deref;
+use std::sync::Arc;
 
+use crate::events::PostCommand;
 use crate::job::Job;
 
 use super::*;
 
 use helix_core::fuzzy::fuzzy_match;
 use helix_core::indent::MAX_INDENT;
+use helix_core::syntax::NodeSearch;
+use helix_core::tree_sitter::Node;
 use helix_core::{line_ending, shellwords::Shellwords};
 use helix_stdx::path::home_dir;
 use helix_view::document::{read_to_string, DEFAULT_LANGUAGE_NAME};
@@ -2186,6 +2190,214 @@ fn reflow(
     Ok(())
 }
 
+/// Performs a depth-first search on a tree-sitter `Node` to find nodes of a specified kind,
+/// returning the position of the first match if the cursor position is within a node's range.
+fn find_position_of_node<'tree>(
+    node_kind: &str,
+    node: Node<'tree>,
+    cursor_pos: usize,
+    seen: &mut Vec<Node<'tree>>,
+) -> Option<usize> {
+    let range = node.range();
+
+    if cursor_pos <= range.end_byte && cursor_pos >= range.start_byte && node.child_count() == 0 {
+        return Some(seen.len());
+    }
+
+    if node.kind() == node_kind {
+        seen.push(node);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(result) = find_position_of_node(node_kind, child, cursor_pos, seen) {
+            return Some(result);
+        }
+    }
+
+    None
+}
+
+fn tree_sitter_tree(
+    cx: &mut compositor::Context,
+    _args: &[Cow<str>],
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    // Update or create the tree.
+    fn update_tree(editor: &mut Editor, is_update: bool) -> anyhow::Result<()> {
+        // The user closed the document. Stop.
+        if is_update && editor.tree_sitter_tree.is_none() {
+            return Ok(());
+        };
+
+        // The document or view doesn't actually exist.
+        if let Some((tree_doc_id, tree_view_id)) = editor.tree_sitter_tree {
+            let mut should_close = false;
+            if editor.document(tree_doc_id).is_none() {
+                if editor.tree.contains(tree_view_id) {
+                    editor.close(tree_view_id);
+                    editor.tree_sitter_tree = None;
+                } else {
+                    editor.tree_sitter_tree = None;
+                }
+                should_close = true;
+                editor.tree_sitter_tree = None;
+            }
+
+            if !editor.tree.contains(tree_view_id) {
+                if editor.document(tree_doc_id).is_none() {
+                    editor.tree_sitter_tree = None;
+                } else {
+                    let _ = editor.close_document(tree_doc_id, true);
+                    editor.tree_sitter_tree = None;
+                }
+                should_close = true;
+            }
+
+            if should_close {
+                return Ok(());
+            }
+        }
+
+        let (view, doc) = current!(editor);
+
+        if let Some((_tree_doc_id, tree_view_id)) = editor.tree_sitter_tree {
+            // The current document is the tree sitter document.
+            if view.id == tree_view_id {
+                // Reset the tree sitter document's highlights if we focus
+                // the document, since we have a visual selection which highlights the same
+                // region. But these highlights are useful to highlight a piece of
+                // text while that document is not focused.
+                doc.set_highlights(view.id, vec![]);
+                // Do not update the tree sitter document. That would cause it
+                // to create a syntax tree for itself, and this process will continue
+                // until Helix will disable syntax highlighting for the file.
+                return Ok(());
+            }
+        }
+
+        let text = doc.text();
+        let syntax = doc
+            .syntax()
+            .context("No tree-sitter grammar found for this file")?;
+
+        let cursor_idx = doc.selection(view.id).primary().cursor(text.slice(..));
+        let from = 0;
+        let to = text.len_chars();
+
+        if let (Some(selected_node), Some(node_at_cursor)) = (
+            syntax.descendant_for_byte_range(from, to),
+            syntax.descendant_for_byte_range(cursor_idx, cursor_idx),
+        ) {
+            let kind = node_at_cursor.kind();
+            let appearance_count =
+                find_position_of_node(kind, selected_node, cursor_idx, &mut vec![]);
+
+            let mut syntax_tree = String::new();
+
+            let position = helix_core::syntax::pretty_print_tree(
+                &mut syntax_tree,
+                selected_node,
+                &mut appearance_count
+                    .map(|count| NodeSearch::new(count, kind.to_owned()))
+                    .as_mut(),
+            )?;
+
+            // Create the tree first on the invokation of the command
+            if editor.tree_sitter_tree.is_none() && !is_update {
+                let tree_id = editor.new_file_from_document(
+                    Action::VerticalSplit,
+                    Document::from(
+                        Rope::from(syntax_tree.clone()),
+                        None,
+                        Arc::clone(&editor.config),
+                    ),
+                );
+
+                let (view, doc) = current!(editor);
+
+                doc.set_language_by_language_id("tsq", Arc::clone(&editor.syn_loader))?;
+                doc.unmodifiable();
+                doc.tree_sitter_tree();
+
+                editor.tree_sitter_tree = Some((tree_id, view.id));
+
+                // Creating the new tree-sitter buffer will switch us
+                // to it, so we're switching it back to the buffer
+                // which was focused previously
+                editor.focus_prev();
+            }
+
+            if let Some((tree_doc_id, tree_doc_view_id)) = editor.tree_sitter_tree {
+                let tree_view = editor.tree.try_get(tree_doc_view_id).cloned();
+                let tree_doc = editor.document_mut(tree_doc_id);
+                if let Some(tree_doc) = tree_doc {
+                    // We replace the entire file's syntax tree with our
+                    // updated syntax tree
+                    let whole_file = Range::new(0, tree_doc.text().len_chars());
+                    let selection = Selection::new(vec![whole_file].into(), 0);
+
+                    if let Some((node_start, node_end, node_kind)) = position {
+                        let transaction = Transaction::change(
+                            tree_doc.text(),
+                            selection.iter().map(|range| {
+                                (
+                                    range.from(),
+                                    range.to(),
+                                    // TODO: remove this clone
+                                    Some(Tendril::from(syntax_tree.clone())),
+                                )
+                            }),
+                        )
+                        .with_selection(Range::new(node_start, node_end).into());
+
+                        // panic happens here, but why?
+                        tree_doc.apply_bypass_unmodifiable(&transaction, tree_doc_view_id);
+
+                        // Highlight the node in the syntax tree where
+                        // our cursor lies. This is needed even though we have
+                        // a selection there of the same size.
+                        //
+                        // The selection cannot be seen while the buffer isn't focused, but the
+                        // highlight can.
+                        tree_doc.set_highlights(
+                            tree_doc_view_id,
+                            node_kind
+                                .chars()
+                                .zip(node_start..node_end)
+                                .map(|(ch, idx)| Overlay::new(idx, ch.to_string()))
+                                .collect(),
+                        );
+
+                        if let Some(view) = tree_view {
+                            align_view(tree_doc, &view, Align::Center);
+                        }
+                    };
+                } else {
+                    // User closed the document
+                    editor.tree_sitter_tree = None;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // Create the tree
+    update_tree(cx.editor, false)?;
+
+    // Update it until the user closes it
+    helix_event::register_hook!(move |e: &mut PostCommand<'_, '_>| {
+        update_tree(e.cx.editor, true)
+    });
+
+    Ok(())
+}
+
 fn tree_sitter_subtree(
     cx: &mut compositor::Context,
     _args: &[Cow<str>],
@@ -2204,7 +2416,7 @@ fn tree_sitter_subtree(
         let to = text.char_to_byte(primary_selection.to());
         if let Some(selected_node) = syntax.descendant_for_byte_range(from, to) {
             let mut contents = String::from("```tsq\n");
-            helix_core::syntax::pretty_print_tree(&mut contents, selected_node)?;
+            helix_core::syntax::pretty_print_tree(&mut contents, selected_node, &mut None)?;
             contents.push_str("\n```");
 
             let callback = async move {
@@ -3087,6 +3299,13 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &["ts-subtree"],
         doc: "Display the smallest tree-sitter subtree that spans the primary selection, primarily for debugging queries.",
         fun: tree_sitter_subtree,
+        signature: CommandSignature::none(),
+    },
+    TypableCommand {
+        name: "tree-sitter-tree",
+        aliases: &["ts-tree"],
+        doc: "Display the full tree-sitter tree that spans the full document, primarily for debugging queries.",
+        fun: tree_sitter_tree,
         signature: CommandSignature::none(),
     },
     TypableCommand {
