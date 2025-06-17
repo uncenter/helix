@@ -1,0 +1,26 @@
+# Main github repository to fetch from.
+# This is going to be our base, into which we merge patches and pull requests.
+repo = "helix-editor/helix"
+
+# The main repository's branch.
+remote-branch = "master"
+
+# Branch which patchy will use to do all of its work on.
+local-branch = "patchy-new"
+
+# List of pull requests numbers which you would like to merge into the repository and branch you have specified previously.
+pull-requests = [
+  # :tree-sitter-tree
+  "12207",
+  # Clickable buffers.
+  "12173",
+  # Rainbow brackets.
+  "13530",
+  # Git blame inline.
+  "13133",
+  # Welcome screen.
+  "13197",
+]
+
+# Optional: A list of patches to apply
+patches = []
