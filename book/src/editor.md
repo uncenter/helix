@@ -1,25 +1,27 @@
 ## Editor
 
-- [`[editor]` Section](#editor-section)
-- [`[editor.clipboard-provider]` Section](#editorclipboard-provider-section)
-- [`[editor.statusline]` Section](#editorstatusline-section)
-- [`[editor.lsp]` Section](#editorlsp-section)
-- [`[editor.inline-blame]` Section](#editorinlineblame-section)
-- [`[editor.cursor-shape]` Section](#editorcursor-shape-section)
-- [`[editor.file-picker]` Section](#editorfile-picker-section)
-- [`[editor.auto-pairs]` Section](#editorauto-pairs-section)
-- [`[editor.auto-save]` Section](#editorauto-save-section)
-- [`[editor.search]` Section](#editorsearch-section)
-- [`[editor.whitespace]` Section](#editorwhitespace-section)
-- [`[editor.indent-guides]` Section](#editorindent-guides-section)
-- [`[editor.gutters]` Section](#editorgutters-section)
-  - [`[editor.gutters.line-numbers]` Section](#editorguttersline-numbers-section)
-  - [`[editor.gutters.diagnostics]` Section](#editorguttersdiagnostics-section)
-  - [`[editor.gutters.diff]` Section](#editorguttersdiff-section)
-  - [`[editor.gutters.spacer]` Section](#editorguttersspacer-section)
-- [`[editor.soft-wrap]` Section](#editorsoft-wrap-section)
-- [`[editor.smart-tab]` Section](#editorsmart-tab-section)
-- [`[editor.inline-diagnostics]` Section](#editorinline-diagnostics-section)
+- [Editor](#editor)
+  - [`[editor]` Section](#editor-section)
+  - [`[editor.clipboard-provider]` Section](#editorclipboard-provider-section)
+  - [`[editor.statusline]` Section](#editorstatusline-section)
+  - [`[editor.lsp]` Section](#editorlsp-section)
+  - [`[editor.inline-blame]` Section](#editorinline-blame-section)
+    - [`format`](#format)
+  - [`[editor.cursor-shape]` Section](#editorcursor-shape-section)
+  - [`[editor.file-picker]` Section](#editorfile-picker-section)
+  - [`[editor.auto-pairs]` Section](#editorauto-pairs-section)
+  - [`[editor.auto-save]` Section](#editorauto-save-section)
+  - [`[editor.search]` Section](#editorsearch-section)
+  - [`[editor.whitespace]` Section](#editorwhitespace-section)
+  - [`[editor.indent-guides]` Section](#editorindent-guides-section)
+  - [`[editor.gutters]` Section](#editorgutters-section)
+    - [`[editor.gutters.line-numbers]` Section](#editorguttersline-numbers-section)
+    - [`[editor.gutters.diagnostics]` Section](#editorguttersdiagnostics-section)
+    - [`[editor.gutters.diff]` Section](#editorguttersdiff-section)
+    - [`[editor.gutters.spacer]` Section](#editorguttersspacer-section)
+  - [`[editor.soft-wrap]` Section](#editorsoft-wrap-section)
+  - [`[editor.smart-tab]` Section](#editorsmart-tab-section)
+  - [`[editor.inline-diagnostics]` Section](#editorinline-diagnostics-section)
 
 ### `[editor]` Section
 
@@ -63,6 +65,7 @@
 | `clipboard-provider` | Which API to use for clipboard interaction. One of `pasteboard` (MacOS), `wayland`, `x-clip`, `x-sel`, `win-32-yank`, `termux`, `tmux`, `windows`, `termcode`, `none`, or a custom command set. | Platform and environment specific. |
 | `editor-config` | Whether to read settings from [EditorConfig](https://editorconfig.org) files | `true` |
 | `rainbow-brackets` | Whether to render rainbow colors for matching brackets. Requires tree-sitter `rainbows.scm` queries for the language. | `false` |
+| `welcome-screen` | Whether to enable the welcome screen | `true` |
 
 ### `[editor.clipboard-provider]` Section
 
